@@ -1,5 +1,16 @@
 ## 六、Service
 
+> 实验内容的hosts文件路由
+
+```
+192.168.137.100 hub.yyq.com
+192.168.137.10 www1.codergoo.com
+192.168.137.10 www2.codergoo.com
+192.168.137.10 www3.codergoo.com
+192.168.137.10 auth.codergoo.com
+192.168.137.10 re.codergoo.com
+```
+
 
 
 ### 6.1 概念
@@ -234,4 +245,336 @@ spec:
 ![image-20211229234502879](06-Service.assets/image-20211229234502879.png)
 
 
+
+### 6.5 Ingress
+
+![image-20211230214300904](06-Service.assets/image-20211230214300904.png)
+
+![image-20211230214324832](06-Service.assets/image-20211230214324832.png)
+
+
+
+#### 6.5.1 安装 Ingress-nginx
+
+```shell
+# 如果出现SSL拒绝访问，需要配置hosts
+199.232.68.133 raw.githubusercontent.com
+151.101.76.133 raw.githubusercontent.com
+
+docker pull quay.io/kubernetes-ingress-controller/nginx-ingress-controller:0.25.0
+# 压缩image为tar
+docker save -o ingress.contr.tar quay.io/kubernetes-ingress-controller/nginx-ingress-controller:0.25.0
+# 压缩包
+tar -zcvf ingress.contr.tar.gz ingress.contr.tar ingress.contr.tar
+# 将压缩包发送至node01与node02
+scp ingress.contr.tar.gz root@k8s-node01:/root
+scp ingress.contr.tar.gz root@k8s-node02:/root
+# 从文件中加载docker image
+docker load -i ingress.contr.tar
+# 应用 mandatory.yaml 创建 pod
+kubectl apply -f mandatory.yaml
+# 查看ingress-nginx pod
+kubectl get pod -n ingress-nginx
+# 应用 service-nodeport.yaml 创建 svc
+kubectl apply -f service-nodeport.yaml
+# 查看ingress-nginx svc
+kubectl get svc -n ingress-nginx
+```
+
+
+
+#### 6.5.2 Ingress HTTP 代理访问
+
+deployment、Service、Ingress Yaml文件
+
+> 案例一
+
+```yaml
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: nginx-dm
+spec:
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        name: nginx
+    spec:
+      containers:
+        - name: nginx
+          image: wangyanglinux/myapp:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-svc
+spec:
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+  selector:
+    name: nginx
+---
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: nginx-test
+spec:
+  rules:
+    - host: www1.codergoo.com
+      http:
+        paths:
+          - path: /
+            backend:
+              serviceName: nginx-svc
+              servicePort: 80
+```
+
+
+
+> 案例二
+
+```yaml
+# Deployment - 1
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: deployment-1
+spec:
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        name: nginx
+    spec:
+      containers:
+        - name: nginx
+          image: wangyanglinux/myapp:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+---
+# Service - 1
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-1
+spec:
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+  selector:
+    name: nginx
+---
+# Ingress
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: ingress-1
+spec:
+  rules:
+    - host: www1.codergoo.com
+      http:
+        paths:
+          - path: /
+            backend:
+              serviceName: svc-1
+              servicePort: 80
+              
+# ---------------- 分界线 ---------------
+
+# Deployment - 2
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: deployment-2
+spec:
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        name: nginx
+    spec:
+      containers:
+        - name: nginx
+          image: wangyanglinux/myapp:v2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+---
+# Service - 2
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-2
+spec:
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+  selector:
+    name: nginx
+---
+# Ingress
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: ingress-2
+spec:
+  rules:
+    - host: www2.codergoo.com
+      http:
+        paths:
+          - path: /
+            backend:
+              serviceName: svc-2
+              servicePort: 80
+```
+
+
+
+```shell
+# 查看nginx-ingress-controller
+kubectl exec -it nginx-ingress-controller-7995bd9c47-tfbhr -n ingress-nginx -- /bin/bash
+# 查看nginx.conf
+cat nginx.conf
+```
+
+
+
+#### 6.5.3 Ingress HTTPS 代理访问
+
+> 创建证书，以及 cert 存储方式
+
+```shell
+# 创建证书
+openssl req -x509 -sha256 -nodes -days 365 -newkey rsa:2048 -keyout tls.key -out tls.crt -subj "/CN=nginxsvc/0=nginxsvc"
+# 导入证书的公私钥
+kubectl create secret tls tls-secret --key tls.key --cert tls.crt
+```
+
+> 测试https
+
+```yaml
+# ingress
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: ingress-https
+spec:
+  tls:
+    - hosts:
+      - www3.codergoo.com
+      secretName: tls-secret
+  rules:
+    - host: www3.codergoo.com
+      http:
+        paths:
+          - path: /
+            backend:
+              serviceName: svc-3
+              servicePort: 80    
+---
+# deployment
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: deployment-3
+spec:
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        name: nginx3
+    spec:
+      containers:
+        - name: nginx3
+          image: wangyanglinux/myapp:v3
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+---
+# service
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-3
+spec:
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+  selector:
+    name: nginx3
+```
+
+
+
+#### 6.5.4 Nginx 进行 BasicAuth
+
+```shell
+yum install -y httpd
+htpasswd -c auth foo
+kubectl create secret generic basic-auth --form-file=auth
+```
+
+
+
+```yaml
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: ingress-with-auth
+  annotations:
+    nginx.ingress.kubernetes.io/auth-type: basic
+    nginx.ingress.kubernetes.io/auth-secret: basic-auth
+    nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - foo'
+spec:
+  rules:
+    - host: auth.codergoo.com
+      http:
+        paths:
+          - path: /
+            backend:
+              serviceName: svc-1
+              servicePort: 80
+```
+
+
+
+#### 6.5.5 Nginx 重写
+
+| 名称                                           | 描述                                                         | 值   |
+| ---------------------------------------------- | ------------------------------------------------------------ | ---- |
+| nginx.ingress.kubernetes.io/rewrite-target     | 必须重定向流量的目标URI                                      | 串   |
+| nginx.ingress.kubernetes.io/ssI-redirect       | 指示位置部分是否仅可访问SSL (当Ingress包含证 书时默认为True) | 布尔 |
+| nginx.ingress.kubernetes.io/force-ssl-redirect | 即使Ingress未启用TLS,也强制重定向到HTTPS                     | 布尔 |
+| nginx.ingress.kubernetes.io/app-root           | 定义Controller必须重定向的应用程序根，如果它在/上下文中      | 串   |
+| nginx.ingress.kubernetes.io/use-regex          | 指示Ingress.上定义的路径是否使用正则表达式                   | 布尔 |
+
+
+
+```yaml
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: nginx-rewrite
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: https://www3.codergoo.com:30508
+spec:
+  rules:
+    - host: re.codergoo.com
+      http:
+        paths:
+          - path: /
+            backend:
+              serviceName: svc-1
+              servicePort: 80
+```
 
