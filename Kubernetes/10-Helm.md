@@ -378,6 +378,64 @@ $ while true; do wget -q -O- http://php-apache.default.svc.cluster.local; done
 
 
 
+### 10.6 使用 Helm 部署 EFK
+
+```shell
+# 添加 Google incubator 仓库
+helm repo add stable https://charts.helm.sh/stable
+helm repo add incubator https://charts.helm.sh/incubator
+```
+
+
+
+
+
+> 部署 Elasticsearch
+
+```shell
+# 删除 Pod
+$ kubectl delete pod ${podname} --force --grace-period=0
+# 删除 Namespace
+$ kubectl delete namespace ${namespace_name} --force --grace-period=0
+
+$ mkcd /usr/local/install-k8s/efk
+# 创建命名空间
+$ kubectl create namespace efk
+# 下载elasticsearch
+$ helm fetch incubator/elasticsearch
+# 安装
+$ helm install --name els1 --namespace=efk -f values.yaml incubator/elasticsearch
+$ kubectl run cirror-$RANDOM --rm -it --image=cirros -- /bin/sh
+  $ curl 10.101.171.192:9200/_cat/nodes
+```
+
+
+
+> 部署 Fluentd
+
+```shell
+# 下载fluentd
+$ helm fetch stable/fluentd-elasticsearch
+# 修改其中的 Elasticsearch 地址
+$ vim values.yaml
+  host: '10.101.171.192'
+
+# 需要下载这个镜像
+$ docker pull mirrorgooglecontainers/fluentd-elasticsearch:v2.3.2
+$ docker tag mirrorgooglecontainers/fluentd-elasticsearch:v2.3.2 gcr.io/google-containers/fluentd-elasticsearch:v2.3.2
+
+$ helm install --name flu1 --namespace=efk -f values.yaml stable/fluentd-elasticsearch
+```
+
+
+
+> 部署 Kibana
+
+```shell
+$ helm fetch stable/kibana --version 0.14.8
+$ helm install --name kib1 --namespace=efk -f values.yaml stable/kibana--version 0.14.8
+```
+
 ## 补充
 
 ### 资源限制 - Pod
